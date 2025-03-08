@@ -95,6 +95,9 @@ export default class TraePlugin extends Plugin {
                                         
                                         await this.app.vault.modify(currentFile, newContent);
 
+                                        // 在新标签页中打开批注文件
+                                        const leaf = this.app.workspace.getLeaf('tab');
+                                        await leaf.openFile(await this.app.vault.getAbstractFileByPath(filePath));
                                         new Notice(`批注文件已创建：${fileName}`);
                                     }
                                 } catch (error) {
