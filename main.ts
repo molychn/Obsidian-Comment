@@ -1,11 +1,11 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, Menu, TFile } from 'obsidian';
 
 interface TraePluginSettings {
-	// 插件设置接口
+    commentFolderPath: string; // 批注文件存放路径
 }
 
 const DEFAULT_SETTINGS: TraePluginSettings = {
-	// 默认设置
+    commentFolderPath: '批注' // 默认存放在批注文件夹
 }
 
 export default class TraePlugin extends Plugin {
@@ -13,19 +13,24 @@ export default class TraePlugin extends Plugin {
 
     async onload() {
         await this.loadSettings();
-
-        // 文件右键菜单
-        this.registerEvent(
-            this.app.workspace.on('file-menu', (menu, file) => {
+    // 添加设置标签页
+    this.addSettingTab(new TraeSettingTab(this.app, this));
+    // 文件右键菜单
+    this.registerEvent(
+        this.app.workspace.on('file-menu', (menu, file) => {
                 menu.addItem((item) => {
                     item
                         .setTitle('创建批注')
                         .setIcon('document-plus')
                         .onClick(async () => {
                             const fileName = `批注-${file.basename}`;
-                            const filePath = `${fileName}.md`;
+                            const filePath = `${this.settings.commentFolderPath}/${fileName}.md`;
                             
                             try {
+                                // 确保目标文件夹存在
+                                if (!await this.app.vault.adapter.exists(this.settings.commentFolderPath)) {
+                                    await this.app.vault.createFolder(this.settings.commentFolderPath);
+                                }
                                 if (!await this.app.vault.adapter.exists(filePath)) {
                                     // 添加文件链接到批注文件开头
                                     const content = `批注来源：[[${file.basename}]]\n\n---\n\n`;
@@ -71,9 +76,14 @@ export default class TraePlugin extends Plugin {
                                 
                                 const nextIndex = maxIndex + 1;
                                 const fileName = `${baseFileName}(${nextIndex})`;
-                                const filePath = `${fileName}.md`;
-
+                                // 使用配置的路径
+                                const filePath = `${this.settings.commentFolderPath}/${fileName}.md`;
                                 try {
+                                    // 确保目标文件夹存在
+                                    if (!await this.app.vault.adapter.exists(this.settings.commentFolderPath)) {
+                                        await this.app.vault.createFolder(this.settings.commentFolderPath);
+                                    }
+                                    
                                     if (!await this.app.vault.adapter.exists(filePath)) {
                                         // 创建批注文件
                                         const content = `批注来源：[[${currentFile.basename}]]\n\n---\n\n原文：\n> ${selection}\n\n批注：\n`;
@@ -124,16 +134,27 @@ export default class TraePlugin extends Plugin {
 }
 
 class TraeSettingTab extends PluginSettingTab {
-	plugin: TraePlugin;
+    plugin: TraePlugin;
 
-	constructor(app: App, plugin: TraePlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+    constructor(app: App, plugin: TraePlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
 
-	display(): void {
-		const {containerEl} = this;
-		containerEl.empty();
-		containerEl.createEl('h2', {text: '插件设置'});
-	}
+    display(): void {
+        const {containerEl} = this;
+        containerEl.empty();
+        containerEl.createEl('h2', {text: '批注插件设置'});
+
+        new Setting(containerEl)
+            .setName('批注文件存放路径')
+            .setDesc('设置批注文件的存放路径（相对于库的根目录）')
+            .addText(text => text
+                .setPlaceholder('批注')
+                .setValue(this.plugin.settings.commentFolderPath)
+                .onChange(async (value) => {
+                    this.plugin.settings.commentFolderPath = value;
+                    await this.plugin.saveSettings();
+                }));
+    }
 }
