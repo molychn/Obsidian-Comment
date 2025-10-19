@@ -18,106 +18,104 @@ export default class TraePlugin extends Plugin {
     // 文件右键菜单
     this.registerEvent(
         this.app.workspace.on('file-menu', (menu, file) => {
+            if (file instanceof TFile) {
                 menu.addItem((item) => {
                     item
                         .setTitle('创建批注')
                         .setIcon('document-plus')
                         .onClick(async () => {
-                            const fileName = `批注-${file.basename}`;
-                            const filePath = `${this.settings.commentFolderPath}/${fileName}.md`;
-                            
+                            const fileName = `批注-${file.basename}.md`;
+                            const filePath = `${this.settings.commentFolderPath}/${fileName}`;
+
                             try {
-                                // 确保目标文件夹存在
                                 if (!await this.app.vault.adapter.exists(this.settings.commentFolderPath)) {
                                     await this.app.vault.createFolder(this.settings.commentFolderPath);
                                 }
-                                if (!await this.app.vault.adapter.exists(filePath)) {
-                                    // 添加文件链接到批注文件开头
-                                    const content = `批注来源：[[${file.basename}]]\n\n---\n\n`;
-                                    await this.app.vault.create(filePath, content);
-                                    new Notice(`批注文件已创建：${fileName}`);
-                                } else {
-                                    new Notice('批注文件已存在！');
+
+                                const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+                                if (existingFile) {
+                                    new Notice('批注文件已存在，正在打开...');
+                                    const leaf = this.app.workspace.getLeaf('tab');
+                                    await leaf.openFile(existingFile as TFile);
+                                    return;
                                 }
+                                
+                                const content = `批注来源：[[${file.name}]]\\n\\n---\\n\\n`;
+                                const newFile = await this.app.vault.create(filePath, content);
+                                new Notice(`批注文件已创建：${fileName}`);
+                                
+                                const leaf = this.app.workspace.getLeaf('tab');
+                                await leaf.openFile(newFile);
+
                             } catch (error) {
-                                new Notice('创建批注文件失败！');
+                                new Notice(`创建或打开批注文件失败：${filePath}`);
                                 console.error(error);
                             }
                         });
                 });
-            })
-        );
+            }
+        })
+    );
 
-        // 编辑器右键菜单部分
-        this.registerEvent(
-            this.app.workspace.on('editor-menu', (menu, editor, view) => {
-                const selection = editor.getSelection();
-                if (selection && view instanceof MarkdownView) {
-                    menu.addItem((item) => {
-                        item
-                            .setTitle('创建批注')
-                            .setIcon('document-plus')
-                            .onClick(async () => {
-                                const currentFile = view.file;
-                                const baseFileName = `批注-${currentFile.basename}`;
-                                
-                                // 查找现有的批注文件并确定序号
-                                const files = this.app.vault.getFiles();
-                                let maxIndex = 0;
-                                const regex = new RegExp(`^${baseFileName}\\((\\d+)\\)\\.md$`);
-                                
-                                files.forEach(file => {
-                                    const match = file.path.match(regex);
-                                    if (match) {
-                                        const index = parseInt(match[1]);
-                                        maxIndex = Math.max(maxIndex, index);
-                                    }
-                                });
-                                
-                                const nextIndex = maxIndex + 1;
-                                const fileName = `${baseFileName}(${nextIndex})`;
-                                // 使用配置的路径
-                                const filePath = `${this.settings.commentFolderPath}/${fileName}.md`;
-                                try {
-                                    // 确保目标文件夹存在
-                                    if (!await this.app.vault.adapter.exists(this.settings.commentFolderPath)) {
-                                        await this.app.vault.createFolder(this.settings.commentFolderPath);
-                                    }
-                                    
-                                    if (!await this.app.vault.adapter.exists(filePath)) {
-                                        // 创建批注文件
-                                        const content = `批注来源：[[${currentFile.basename}]]\n\n---\n\n原文：\n> ${selection}\n\n批注：\n`;
-                                        await this.app.vault.create(filePath, content);
+    // 编辑器右键菜单部分
+    this.registerEvent(
+        this.app.workspace.on('editor-menu', (menu, editor, view) => {
+            const selection = editor.getSelection();
+            if (selection && view.file) {
+                menu.addItem((item) => {
+                    item
+                        .setTitle('创建批注')
+                        .setIcon('document-plus')
+                        .onClick(async () => {
+                            const currentFile = view.file;
+                            if (!currentFile) {
+                                new Notice("无法获取当前文件。");
+                                return;
+                            }
 
-                                        // 获取选中文本的起始位置
-                                        const cursor = editor.getCursor('from');
-                                        const originalContent = await this.app.vault.read(currentFile);
-                                        
-                                        // 将文本分成三部分并组合
-                                        const beforeSelection = originalContent.slice(0, editor.posToOffset(cursor));
-                                        const afterSelection = originalContent.slice(editor.posToOffset(cursor) + selection.length);
-                                        
-                                        // 保留原文，添加批注标识和链接
-                                        const newContent = beforeSelection + 
-                                            selection +
-                                            `[(${nextIndex})](${fileName})` + 
-                                            afterSelection;
-                                        
-                                        await this.app.vault.modify(currentFile, newContent);
+                            const baseFileName = `批注-${currentFile.basename}`;
+                            const folderPath = this.settings.commentFolderPath;
 
-                                        // 在新标签页中打开批注文件
-                                        const leaf = this.app.workspace.getLeaf('tab');
-                                        await leaf.openFile(await this.app.vault.getAbstractFileByPath(filePath));
-                                        new Notice(`批注文件已创建：${fileName}`);
-                                    }
-                                } catch (error) {
-                                    new Notice('创建批注文件失败！');
-                                    console.error(error);
+                            if (!await this.app.vault.adapter.exists(folderPath)) {
+                                await this.app.vault.createFolder(folderPath);
+                            }
+
+                            let nextIndex = 1;
+                            let fileNameWithExt: string;
+                            let filePath: string;
+                            
+                            // 使用循环找到一个不存在的文件名
+                            while (true) {
+                                fileNameWithExt = `${baseFileName}(${nextIndex}).md`;
+                                filePath = `${folderPath}/${fileNameWithExt}`;
+                                const fileExists = await this.app.vault.adapter.exists(filePath);
+                                if (!fileExists) {
+                                    break; // 找到一个可用的文件名
                                 }
-                            });
-                    });
-                }
-            })
+                                nextIndex++; // 如果文件已存在，则序号加1
+                            }
+
+                            try {
+                                const selection = editor.getSelection();
+                                const content = `批注来源：[[${currentFile.name}]]\n\n---\n\n原文：\n> ${selection}\n\n批注：\n`;
+                                const newFile = await this.app.vault.create(filePath, content);
+
+                                // 在原文中插入链接
+                                const fileNameWithoutExt = `${baseFileName}(${nextIndex})`;
+                                editor.replaceSelection(`${selection}[(${nextIndex})](${fileNameWithoutExt})`);
+
+                                new Notice(`批注文件已创建：${fileNameWithExt}`);
+                                const leaf = this.app.workspace.getLeaf('tab');
+                                await leaf.openFile(newFile);
+
+                            } catch (error) {
+                                new Notice(`创建批注文件失败，请检查路径和权限： ${filePath}`);
+                                console.error("创建批注文件失败:", error);
+                            }
+                        });
+                });
+            }
+        })
         );
     }
 	onunload() {
